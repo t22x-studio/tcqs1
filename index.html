@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quick Jyutping Search</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 16px auto; padding: 0 12px; }
+  .search-container { display: flex; align-items: center; gap: 10px; }
+  .home-title { font-size: 32px; font-weight: 700; cursor: pointer; user-select: none; line-height: 1; padding: 4px 8px; border: 2px solid #000; }
+  .home-title:hover { background: #f2f2f2; }
+  input { flex: 1; padding: 12px; font-size: 16px; box-sizing: border-box; }
+  .hint { color:#666; font-size: 14px; margin: 8px 0 14px; }
+  .card { border:1px solid #ddd; border-radius: 10px; padding: 12px; margin: 12px 0; }
+  .entry { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+  .tag { display:inline-block; margin: 4px 6px 0 0; padding: 4px 8px; background:#f2f2f2; border-radius:999px; cursor:pointer; }
+  .tag:hover { background:#e6e6e6; }
+  .muted { color:#666; font-size: 12px; margin-top: 16px; text-align: center; }
+  .footer-links { text-align: center; font-size: 11px; margin-top: 6px; color: #888; }
+  .footer-links a { color: #888; text-decoration: none; }
+  .footer-links a:hover { text-decoration: underline; }
+  .section { margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="search-container">
+  <div class="home-title" onclick="goHome()" title="Back to Home">中</div>
+  <input id="q" placeholder="Type a character, word, English term, or jyutping (#character:心 or #jyutping:cat1)">
+</div>
+<div class="hint">Click any jyutping to view all characters/words with that pronunciation.</div>
+<div id="status" class="muted"></div>
+<div id="out"></div>
+<div class="muted">Thanks | Quick Jyutping Search</div>
+<div class="footer-links">Data reference: <a href="https://words.hk/" target="_blank" rel="noopener">粵典</a></div>
+
+<script>
+const CHARLIST_URL = "./charlist.json";
+const WORDLIST_URL  = "./wordlist.json";
+const ENGLISH_URL   = "./englishindex.json";
+//const CHARLIST_URL = "https://words.hk/faiman/analysis/charlist.json";
+//const WORDLIST_URL  = "https://words.hk/faiman/analysis/wordslist.json";
+//const ENGLISH_URL   = "https://words.hk/faiman/analysis/englishindex.json";
+
+const q = document.getElementById('q');
+const out = document.getElementById('out');
+const status = document.getElementById('status');
+
+const items = [];
+const byJyutping = new Map();
+const byEntry = new Map();
+const byEnglish = new Map();
+
+function addItem(entry, jyutpings, source, weight=null, englishKey=null) {
+  const clean = [...new Set((jyutpings || []).map(x => String(x).trim()).filter(Boolean))];
+  const item = { entry: String(entry), jyutpings: clean, source, weight, englishKey };
+  items.push(item);
+
+  const entryKey = item.entry.toLowerCase();
+  if (!byEntry.has(entryKey)) byEntry.set(entryKey, []);
+  byEntry.get(entryKey).push(item);
+
+  for (const j of clean) {
+    const key = j.toLowerCase();
+    if (!byJyutping.has(key)) byJyutping.set(key, []);
+    byJyutping.get(key).push(item);
+  }
+
+  if (englishKey) {
+    const k = englishKey.toLowerCase();
+    if (!byEnglish.has(k)) byEnglish.set(k, []);
+    byEnglish.get(k).push(item);
+  }
+}
+
+function parseEnglishIndex(json) {
+  // Supports:
+  // {
+  //   "carrot": [["胡蘿蔔:wu4 lo4 baak6", 100], ...],
+  //   "!carrot": ...
+  // }
+  for (const [english, rows] of Object.entries(json)) {
+    const cleanEnglish = english.replace(/^!/, '');
+    if (!Array.isArray(rows)) continue;
+
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length < 1) continue;
+      const s = String(row[0]);
+      const weight = row[1] ?? null;
+      const idx = s.lastIndexOf(':');
+      if (idx < 0) continue;
+
+      const entry = s.slice(0, idx);
+      const jyutping = s.slice(idx + 1);
+      addItem(entry, [jyutping], "english-index", weight, cleanEnglish);
+    }
+  }
+}
+
+function render(list, titleNote = "", isPronunciationTable = false) {
+  if (!list.length) {
+    out.innerHTML = "<p>No results.</p>";
+    return;
+  }
+
+  const headerHtml = titleNote ? `<h3>${escapeHtml(titleNote)}</h3>` : '';
+
+  if (isPronunciationTable) {
+    // Render clean compact list with square outline, bold text, and fixed dimensions
+    out.innerHTML = headerHtml + `<div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px;">` +
+      list.map(item => `
+        <span style="display: inline-flex; align-items: center; justify-content: center; width: 45px; height: 45px; font-size: 32px; font-weight: 500; border: 3px solid blue; background: #fff; border-radius: 0px; cursor: pointer;" onclick="searchByCharacter('${escapeJs(item.entry)}')">
+          ${escapeHtml(item.entry)}
+        </span>
+      `).join('') + `</div>`;
+    return;
+  }
+
+  out.innerHTML = headerHtml + list.map(item => `
+    <div class="card">
+      <div class="entry" style="cursor:pointer;" onclick="searchByCharacter('${escapeJs(item.entry)}')">${escapeHtml(item.entry)}</div>
+      <div class="section"><b>Jyutping:</b> ${
+        item.jyutpings.map(j => `<span class="tag" onclick="searchByJyutping('${escapeJs(j)}')">${escapeHtml(j)}</span>`).join(' ')
+      }</div>
+      ${item.englishKey ? `<div class="section"><b>English:</b> <span class="tag" onclick="search('${escapeJs(item.englishKey)}')">${escapeHtml(item.englishKey)}</span></div>` : ''}
+    </div>
+  `).join('');
+}
+
+function searchByJyutping(jyutping) {
+  const term = `#jyutping:${jyutping}`;
+  q.value = term;
+  location.hash = encodeURIComponent(term);
+  search(term);
+}
+
+function searchByCharacter(char) {
+  const term = `#character:${char}`;
+  q.value = term;
+  location.hash = encodeURIComponent(term);
+  search(term);
+}
+
+function search(term) {
+  term = String(term || '').trim();
+  q.value = term;
+  if (term) {
+    location.hash = encodeURIComponent(term);
+  } else {
+    history.pushState("", document.title, window.location.pathname + window.location.search);
+  }
+
+  const t = term.toLowerCase();
+  if (!t) {
+    showRandomFrontPage();
+    return;
+  }
+
+  const resultMap = new Map();
+
+  // Handle #character:xxx
+  if (t.startsWith('#character:')) {
+    const charQuery = term.slice(11).trim().toLowerCase();
+    if (byEntry.has(charQuery)) {
+      for (const item of byEntry.get(charQuery)) resultMap.set(keyOf(item), item);
+    }
+    const result = [...resultMap.values()];
+    render(result, `Character lookup: ${term.slice(11)}`);
+    status.textContent = `${result.length} result(s) for character "${term.slice(11)}"`;
+    return;
+  }
+
+  // Handle #jyutping:xxx
+  if (t.startsWith('#jyutping:')) {
+    const jyutpingQuery = term.slice(10).trim().toLowerCase();
+    if (byJyutping.has(jyutpingQuery)) {
+      for (const item of byJyutping.get(jyutpingQuery)) resultMap.set(keyOf(item), item);
+    }
+    const result = [...resultMap.values()];
+    render(result, `${term.slice(10)}`, true); // Pronunciation Table for Jyutping
+    status.textContent = `${result.length} entry/entries with pronunciation "${term.slice(10)}"`;
+    return;
+  }
+
+  if (byEntry.has(t)) {
+    for (const item of byEntry.get(t)) resultMap.set(keyOf(item), item);
+  }
+
+  if (byJyutping.has(t)) {
+    for (const item of byJyutping.get(t)) resultMap.set(keyOf(item), item);
+  }
+
+  if (byEnglish.has(t)) {
+    for (const item of byEnglish.get(t)) resultMap.set(keyOf(item), item);
+  }
+
+  for (const item of items) {
+    if (
+      item.entry.toLowerCase().includes(t) ||
+      item.jyutpings.some(j => j.toLowerCase().includes(t)) ||
+      (item.englishKey && item.englishKey.toLowerCase().includes(t))
+    ) {
+      resultMap.set(keyOf(item), item);
+    }
+  }
+
+  const result = [...resultMap.values()];
+  render(result);
+  status.textContent = `${result.length} result(s) for "${term}"`;
+}
+
+function showRandomFrontPage() {
+  if (!items.length) return;
+  const randomItem = items[Math.floor(Math.random() * items.length)];
+  render([randomItem], "Random Word / Character");
+  status.textContent = `Loaded ${items.length} entries. Showing random featured item.`;
+}
+function goHome() {
+  q.value = "";
+  history.pushState("", document.title, window.location.pathname + window.location.search);
+  showRandomFrontPage();
+}
+
+function keyOf(item) {
+  return `${item.source}|${item.entry}|${item.jyutpings.join(',')}|${item.englishKey || ''}|${item.weight ?? ''}`;
+}
+
+async function loadJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to load ${url}: ${res.status}`);
+  return await res.json();
+}
+
+async function loadJsonWithTimeout(url, timeoutMs = 2000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    if (!res.ok) throw new Error(`Failed to load ${url}: ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
+async function build() {
+  status.textContent = "Loading...";
+
+  // Add sample placeholder entry as offline fallback
+  addItem("心", ["sam1"], "sample", null, "heart");
+
+  const initial = location.hash ? decodeURIComponent(location.hash.slice(1)) : "";
+
+  try {
+    // Attempt loading with 2s timeout
+    const [charlist, wordlist, englishIndex] = await Promise.all([
+      loadJsonWithTimeout(CHARLIST_URL, 2000),
+      loadJsonWithTimeout(WORDLIST_URL, 2000),
+      loadJsonWithTimeout(ENGLISH_URL, 2000)
+    ]);
+
+    for (const [entry, readingsObj] of Object.entries(charlist)) {
+      addItem(entry, Object.keys(readingsObj), "charlist");
+    }
+
+    for (const [entry, readingsArr] of Object.entries(wordlist)) {
+      addItem(entry, readingsArr, "wordlist");
+    }
+
+    parseEnglishIndex(englishIndex);
+
+    status.textContent = `Loaded ${items.length} entries.`;
+  } catch (err) {
+    console.warn("JSON load timed out or failed. Using offline sample data.", err);
+    status.textContent = `Loaded offline mode (${items.length} sample entry).`;
+  }
+
+  // Render initial view (uses cached items in memory, no re-fetching)
+  if (initial) {
+    search(initial);
+  } else {
+    showRandomFrontPage();
+  }
+}
+
+q.addEventListener('input', e => search(e.target.value));
+window.addEventListener('hashchange', () => {
+  const term = decodeURIComponent(location.hash.slice(1));
+  if (term !== q.value) search(term);
+});
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
+function escapeJs(s) {
+  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+}
+
+build().catch(err => {
+  status.textContent = "Failed to load data.";
+  out.innerHTML = "<pre>" + escapeHtml(String(err)) + "</pre>";
+});
+</script>
+</body>
+</html>
