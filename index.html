@@ -11,15 +11,29 @@
   .home-title:hover { background: #f2f2f2; }
   input { flex: 1; padding: 12px; font-size: 16px; box-sizing: border-box; }
   .hint { color:#666; font-size: 14px; margin: 8px 0 14px; }
-  .card { border:1px solid #ddd; border-radius: 10px; padding: 12px; margin: 12px 0; }
-  .entry { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
-  .tag { display:inline-block; margin: 4px 6px 0 0; padding: 4px 8px; background:#f2f2f2; border-radius:999px; cursor:pointer; }
+  .card { border:1px solid #ddd; border-radius: 8px; padding: 8px 10px; margin: 6px 0; background: #fff; }
+  .entry { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .tag { display:inline-block; margin: 2px 4px 0 0; padding: 2px 6px; font-size: 13px; background:#f2f2f2; border-radius:999px; cursor:pointer; }
   .tag:hover { background:#e6e6e6; }
   .muted { color:#666; font-size: 12px; margin-top: 16px; text-align: center; }
   .footer-links { text-align: center; font-size: 11px; margin-top: 6px; color: #888; }
   .footer-links a { color: #888; text-decoration: none; }
   .footer-links a:hover { text-decoration: underline; }
-  .section { margin-top: 8px; }
+  .section { margin-top: 4px; font-size: 13px; line-height: 1.3; }
+
+  /* Responsive Grid Layout */
+  #out { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 10px; margin-top: 10px; }
+  #out > h3 { grid-column: 1 / -1; margin: 4px 0; }
+  #out > p { grid-column: 1 / -1; }
+
+  /* Mobile / Small screen adjustments */
+  @media (max-width: 600px) {
+    #out { grid-template-columns: 1fr; gap: 6px; }
+    .card { padding: 6px 8px; }
+    .entry { font-size: 16px; }
+    .tag { font-size: 11px; padding: 1px 4px; }
+    .section { font-size: 12px; }
+  }
 </style>
 </head>
 <body>
@@ -96,7 +110,7 @@ function parseEnglishIndex(json) {
   }
 }
 
-function render(list, titleNote = "", isPronunciationTable = false) {
+function render(list, titleNote = "", isPronunciationTable = false, isDetailView = false) {
   if (!list.length) {
     out.innerHTML = "<p>No results.</p>";
     return;
@@ -105,23 +119,38 @@ function render(list, titleNote = "", isPronunciationTable = false) {
   const headerHtml = titleNote ? `<h3>${escapeHtml(titleNote)}</h3>` : '';
 
   if (isPronunciationTable) {
-    // Render clean compact list with square outline, bold text, and fixed dimensions
     out.innerHTML = headerHtml + `<div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px;">` +
       list.map(item => `
-        <span style="display: inline-flex; align-items: center; justify-content: center; width: 45px; height: 45px; font-size: 32px; font-weight: 500; border: 3px solid blue; background: #fff; border-radius: 0px; cursor: pointer;" onclick="searchByCharacter('${escapeJs(item.entry)}')">
+        <span style="display: inline-flex; align-items: center; justify-content: center; width: 60px; height: 60px; font-size: 32px; font-weight: 700; border: 3px solid blue; background: #fff; border-radius: 0px; cursor: pointer;" onclick="searchByCharacter('${escapeJs(item.entry)}')">
           ${escapeHtml(item.entry)}
         </span>
       `).join('') + `</div>`;
     return;
   }
 
+  // If viewing a single entry detail page (#character:xxx or exact single result)
+  if (isDetailView && list.length === 1) {
+    const item = list[0];
+    out.innerHTML = headerHtml + `
+      <div style="border: 2px solid #333; border-radius: 12px; padding: 24px; margin-top: 16px; background: #fafafa; max-width: 600px;">
+        <div style="font-size: 56px; font-weight: 800; margin-bottom: 16px; border-bottom: 2px solid #ddd; padding-bottom: 8px;">${escapeHtml(item.entry)}</div>
+        <div style="font-size: 18px; margin-bottom: 12px;"><b>Jyutping:</b><br><div style="margin-top: 6px;">${
+          item.jyutpings.map(j => `<span class="tag" style="font-size: 18px; padding: 6px 12px;" onclick="searchByJyutping('${escapeJs(j)}')">${escapeHtml(j)}</span>`).join(' ')
+        }</div></div>
+        ${item.englishKey ? `<div style="font-size: 18px; margin-top: 16px;"><b>English Meanings:</b><br><div style="margin-top: 6px; font-size: 16px; color: #444;">${escapeHtml(item.englishKey)}</div></div>` : ''}
+        <div style="margin-top: 20px;"><button onclick="goHome()" style="padding: 8px 16px; font-size: 14px; cursor: pointer;">← Back to Home</button></div>
+      </div>`;
+    return;
+  }
+
+  // Standard Compact Grid List for multiple search results
   out.innerHTML = headerHtml + list.map(item => `
     <div class="card">
       <div class="entry" style="cursor:pointer;" onclick="searchByCharacter('${escapeJs(item.entry)}')">${escapeHtml(item.entry)}</div>
       <div class="section"><b>Jyutping:</b> ${
         item.jyutpings.map(j => `<span class="tag" onclick="searchByJyutping('${escapeJs(j)}')">${escapeHtml(j)}</span>`).join(' ')
       }</div>
-      ${item.englishKey ? `<div class="section"><b>English:</b> <span class="tag" onclick="search('${escapeJs(item.englishKey)}')">${escapeHtml(item.englishKey)}</span></div>` : ''}
+      ${item.englishKey ? `<div class="section"><b>English:</b> ${escapeHtml(item.englishKey)}</div>` : ''}
     </div>
   `).join('');
 }
@@ -157,81 +186,88 @@ function search(term) {
 
   const resultMap = new Map();
 
-  // Handle #character:xxx
+  // Handle #jyutping:xxx specially (renders pronunciation grid table with unique characters)
+  if (t.startsWith('#jyutping:')) {
+    const jyutpingQuery = term.slice(10).trim().toLowerCase();
+    const uniqueCharMap = new Map();
+
+    if (byJyutping.has(jyutpingQuery)) {
+      for (const item of byJyutping.get(jyutpingQuery)) {
+        if (item.entry && item.entry.trim().length === 1) {
+          const charKey = item.entry.trim();
+          if (!uniqueCharMap.has(charKey)) {
+            uniqueCharMap.set(charKey, item);
+          }
+        }
+      }
+    }
+    const tableResults = [...uniqueCharMap.values()];
+    render(tableResults, `${term.slice(10)}`, true);
+    status.textContent = `${tableResults.length} single character(s) with pronunciation "${term.slice(10)}"`;
+    return;
+  }
+
+  // Populate resultMap for #character:xxx or general text queries
   if (t.startsWith('#character:')) {
     const charQuery = term.slice(11).trim().toLowerCase();
     if (byEntry.has(charQuery)) {
       for (const item of byEntry.get(charQuery)) resultMap.set(keyOf(item), item);
     }
-    const result = [...resultMap.values()];
-    render(result, `Character lookup: ${term.slice(11)}`);
-    status.textContent = `${result.length} result(s) for character "${term.slice(11)}"`;
-    return;
-  }
-
-  // Handle #jyutping:xxx
-  if (t.startsWith('#jyutping:')) {
-    const jyutpingQuery = term.slice(10).trim().toLowerCase();
-    if (byJyutping.has(jyutpingQuery)) {
-      for (const item of byJyutping.get(jyutpingQuery)) resultMap.set(keyOf(item), item);
+  } else {
+    if (byEntry.has(t)) {
+      for (const item of byEntry.get(t)) resultMap.set(keyOf(item), item);
     }
-    const result = [...resultMap.values()];
-    render(result, `${term.slice(10)}`, true); // Pronunciation Table for Jyutping
-    status.textContent = `${result.length} entry/entries with pronunciation "${term.slice(10)}"`;
-    return;
-  }
-
-  if (byEntry.has(t)) {
-    for (const item of byEntry.get(t)) resultMap.set(keyOf(item), item);
-  }
-
-  if (byJyutping.has(t)) {
-    for (const item of byJyutping.get(t)) resultMap.set(keyOf(item), item);
-  }
-
-  if (byEnglish.has(t)) {
-    for (const item of byEnglish.get(t)) resultMap.set(keyOf(item), item);
-  }
-
-  for (const item of items) {
-    if (
-      item.entry.toLowerCase().includes(t) ||
-      item.jyutpings.some(j => j.toLowerCase().includes(t)) ||
-      (item.englishKey && item.englishKey.toLowerCase().includes(t))
-    ) {
-      resultMap.set(keyOf(item), item);
+    if (byJyutping.has(t)) {
+      for (const item of byJyutping.get(t)) resultMap.set(keyOf(item), item);
+    }
+    if (byEnglish.has(t)) {
+      for (const item of byEnglish.get(t)) resultMap.set(keyOf(item), item);
+    }
+    for (const item of items) {
+      if (
+        item.entry.toLowerCase().includes(t) ||
+        item.jyutpings.some(j => j.toLowerCase().includes(t)) ||
+        (item.englishKey && item.englishKey.toLowerCase().includes(t))
+      ) {
+        resultMap.set(keyOf(item), item);
+      }
     }
   }
 
-  // Deduplicate and group results by entry character/word
+  // Unified deduplication and grouping for all matched items
   const rawResults = [...resultMap.values()];
   const groupedMap = new Map();
 
   for (const item of rawResults) {
-    const entryKey = item.entry;
+    const entryKey = item.entry.trim();
     if (!groupedMap.has(entryKey)) {
       groupedMap.set(entryKey, {
         entry: item.entry,
-        jyutpings: new Set(item.jyutpings),
+        jyutpings: new Set(item.jyutpings || []),
         englishKeys: new Set(item.englishKey ? [item.englishKey] : []),
         source: item.source
       });
     } else {
       const existing = groupedMap.get(entryKey);
-      item.jyutpings.forEach(j => existing.jyutpings.add(j));
-      if (item.englishKey) existing.englishKeys.add(item.englishKey);
+      if (item.jyutpings) {
+        item.jyutpings.forEach(j => existing.jyutpings.add(j));
+      }
+      if (item.englishKey) {
+        existing.englishKeys.add(item.englishKey);
+      }
     }
   }
 
-  const result = [...groupedMap.values()].map(g => ({
+  const finalResult = [...groupedMap.values()].map(g => ({
     entry: g.entry,
     jyutpings: [...g.jyutpings],
-    englishKey: [...g.englishKeys].join(', '),
+    englishKey: [...g.englishKeys].filter(Boolean).join(', '),
     source: g.source
   }));
 
-  render(result);
-  status.textContent = `${result.length} result(s) for "${term}"`;
+  const isDetail = t.startsWith('#character:') || (finalResult.length === 1 && finalResult[0].entry.toLowerCase() === t);
+  render(finalResult, "", false, isDetail);
+  status.textContent = `${finalResult.length} result(s) for "${term}"`;
 }
 
 function showRandomFrontPage() {
@@ -322,7 +358,7 @@ q.addEventListener('input', e => {
   // Debounce search by 300ms so it doesn't search on every single keystroke
   debounceTimer = setTimeout(() => {
     search(val);
-  }, 300);
+  }, 500);
 });
 
 q.addEventListener('keydown', e => {
