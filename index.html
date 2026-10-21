@@ -203,7 +203,33 @@ function search(term) {
     }
   }
 
-  const result = [...resultMap.values()];
+  // Deduplicate and group results by entry character/word
+  const rawResults = [...resultMap.values()];
+  const groupedMap = new Map();
+
+  for (const item of rawResults) {
+    const entryKey = item.entry;
+    if (!groupedMap.has(entryKey)) {
+      groupedMap.set(entryKey, {
+        entry: item.entry,
+        jyutpings: new Set(item.jyutpings),
+        englishKeys: new Set(item.englishKey ? [item.englishKey] : []),
+        source: item.source
+      });
+    } else {
+      const existing = groupedMap.get(entryKey);
+      item.jyutpings.forEach(j => existing.jyutpings.add(j));
+      if (item.englishKey) existing.englishKeys.add(item.englishKey);
+    }
+  }
+
+  const result = [...groupedMap.values()].map(g => ({
+    entry: g.entry,
+    jyutpings: [...g.jyutpings],
+    englishKey: [...g.englishKeys].join(', '),
+    source: g.source
+  }));
+
   render(result);
   status.textContent = `${result.length} result(s) for "${term}"`;
 }
@@ -284,7 +310,27 @@ async function build() {
   }
 }
 
-q.addEventListener('input', e => search(e.target.value));
+let debounceTimer;
+q.addEventListener('input', e => {
+  clearTimeout(debounceTimer);
+  const val = e.target.value;
+  // If user cleared the input, go home immediately
+  if (!val.trim()) {
+    goHome();
+    return;
+  }
+  // Debounce search by 300ms so it doesn't search on every single keystroke
+  debounceTimer = setTimeout(() => {
+    search(val);
+  }, 300);
+});
+
+q.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    clearTimeout(debounceTimer);
+    search(e.target.value);
+  }
+});
 window.addEventListener('hashchange', () => {
   const term = decodeURIComponent(location.hash.slice(1));
   if (term !== q.value) search(term);
