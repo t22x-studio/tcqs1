@@ -39,7 +39,7 @@
 <body>
 <div class="search-container">
   <div class="home-title" onclick="goHome()" title="Back to Home">中</div>
-  <input id="q" placeholder="Type a character, word, English term, or jyutping (#character:心 or #jyutping:cat1)">
+  <input id="q" placeholder="Type a character, word, English, jyutping, or #character:心, #jyutping:sam1, #pinyin:xīn, #radical:心">
 </div>
 <div class="hint">Click any jyutping to view all characters/words with that pronunciation.</div>
 <div id="status" class="muted"></div>
@@ -51,6 +51,7 @@
 const CHARLIST_URL = "./charlist.json";
 const WORDLIST_URL  = "./wordlist.json";
 const ENGLISH_URL   = "./englishindex.json";
+const HANZI_URL = "./cdict.json";
 //const CHARLIST_URL = "https://words.hk/faiman/analysis/charlist.json";
 //const WORDLIST_URL  = "https://words.hk/faiman/analysis/wordslist.json";
 //const ENGLISH_URL   = "https://words.hk/faiman/analysis/englishindex.json";
@@ -63,6 +64,38 @@ const items = [];
 const byJyutping = new Map();
 const byEntry = new Map();
 const byEnglish = new Map();
+const byChar = new Map();
+const byRadical = new Map();
+const byPinyin = new Map();
+const byPinyinBase = new Map();
+
+const TONE_RE = /[\u0300\u0301\u0304\u030c]/g;
+const pyKey = s => String(s).trim().toLowerCase().normalize('NFC');
+const pyBase = s => String(s).trim().toLowerCase().normalize('NFD').replace(TONE_RE, '').normalize('NFC');
+const hasTone = s => /[\u0300\u0301\u0304\u030c]/.test(String(s).normalize('NFD'));
+
+function addHanzi(ch, d) {
+  let py = d.pronunciation_mandarin_pinyin, zy = d.pronunciation_mandarin_zhuyin;
+  if (!py && Array.isArray(d.pronunciation_mandarin)) {
+    const m = d.pronunciation_mandarin;
+    py = m.filter(x => !/[\u3100-\u312f]/.test(x));
+    zy = m.filter(x => /[\u3100-\u312f]/.test(x));
+  }
+  py = (py || []).filter(Boolean);
+  zy = (zy || []).filter(Boolean);
+  const rec = { radical: d.radical || '', pinyin: py, zhuyin: zy, strokes: d.strokes_total ?? null };
+  byChar.set(ch, rec);
+  if (rec.radical) {
+    if (!byRadical.has(rec.radical)) byRadical.set(rec.radical, []);
+    byRadical.get(rec.radical).push(ch);
+  }
+  for (const p of py) {
+    for (const [map, k] of [[byPinyin, pyKey(p)], [byPinyinBase, pyBase(p)]]) {
+      if (!map.has(k)) map.set(k, []);
+      if (!map.get(k).includes(ch)) map.get(k).push(ch);
+    }
+  }
+}
 
 function addItem(entry, jyutpings, source, weight=null, englishKey=null) {
   const clean = [...new Set((jyutpings || []).map(x => String(x).trim()).filter(Boolean))];
@@ -129,15 +162,27 @@ function render(list, titleNote = "", isPronunciationTable = false, isDetailView
   }
 
   // If viewing a single entry detail page (#character:xxx or exact single result)
-  if (isDetailView && list.length === 1) {
-    const item = list[0];
+    if (isDetailView && list.length === 1) {
+    const item = list[0], h = item.hanzi;
+    const ZH = "font-family:'PingFang TC','Noto Sans TC','Microsoft JhengHei','Noto Sans CJK TC',sans-serif;";
+    const T = 'font-size:18px;padding:6px 6px;';
+    const jy = item.jyutpings.map(j => `<span class="tag" style="${T}" onclick="searchByJyutping('${escapeJs(j)}')">${escapeHtml(j)}</span>`).join(' ');
+    const py = h && h.pinyin.length ? h.pinyin.map(p => `<span class="tag" lang="zh-Hant" style="${T}" onclick="searchByPinyin('${escapeJs(p)}')">${escapeHtml(p)}</span>`).join(' ') : '';
+    const zy = h && h.zhuyin.length ? h.zhuyin.map(z => `<span class="tag" lang="zh-Hant" style="${T}${ZH}cursor:default;">${escapeHtml(z)}</span>`).join(' ') : '';
+    const pz = (py || zy) ? `<div style="display:flex;flex-wrap:wrap;gap:12px 20px;">
+        ${py ? `<div><b>Pinyin (拼音):</b><div style="margin-top:3px;">${py}</div></div>` : ''}
+        ${zy ? `<div><b>Zhuyin (注音):</b><div style="margin-top:3px;">${zy}</div></div>` : ''}
+      </div>` : '';
+    const rad = h && h.radical ? `<div style="color:#555; font-size:15px;margin-bottom:10px;">Radical: <span class="tag" lang="zh-Hant" style="color:#222; font-size:18px;${ZH}" onclick="searchByRadical('${escapeJs(h.radical)}')">${escapeHtml(h.radical)}</span>${h.strokes != null ? ` <span style="color:#555;font-size:15px;">Strokes: ${h.strokes}</span>` : ''}</div>` : '';
     out.innerHTML = headerHtml + `
       <div style="border: 2px solid #333; border-radius: 12px; padding: 24px; margin-top: 16px; background: #fafafa; max-width: 600px;">
         <div style="font-size: 56px; font-weight: 800; margin-bottom: 16px; border-bottom: 2px solid #ddd; padding-bottom: 8px;">${escapeHtml(item.entry)}</div>
-        <div style="font-size: 18px; margin-bottom: 12px;"><b>Jyutping:</b><br><div style="margin-top: 6px;">${
-          item.jyutpings.map(j => `<span class="tag" style="font-size: 18px; padding: 6px 12px;" onclick="searchByJyutping('${escapeJs(j)}')">${escapeHtml(j)}</span>`).join(' ')
-        }</div></div>
-        ${item.englishKey ? `<div style="font-size: 18px; margin-top: 16px;"><b>English Meanings:</b><br><div style="margin-top: 6px; font-size: 16px; color: #444;">${escapeHtml(item.englishKey)}</div></div>` : ''}
+        <div style="display:flex; flex-wrap:wrap; gap:12px 28px; font-size:18px; margin-bottom:12px;">
+          <div><b>Jyutping (粵拼):</b><div style="margin-top:6px;">${jy}</div></div>
+          ${pz}
+        </div>
+        ${rad}
+        ${item.englishKey ? `<div style="font-size: 18px; margin-top: 16px;"><b>English meanings:</b><br><div style="margin-top: 6px; font-size: 16px; color: #444;">${escapeHtml(item.englishKey)}</div></div>` : ''}
         <div style="margin-top: 20px;"><button onclick="goHome()" style="padding: 8px 16px; font-size: 14px; cursor: pointer;">← Back to Home</button></div>
       </div>`;
     return;
@@ -157,6 +202,19 @@ function render(list, titleNote = "", isPronunciationTable = false, isDetailView
 
 function searchByJyutping(jyutping) {
   const term = `#jyutping:${jyutping}`;
+  q.value = term;
+  location.hash = encodeURIComponent(term);
+  search(term);
+}
+function searchByPinyin(p) {
+  const term = `#pinyin:${p}`;
+  q.value = term;
+  location.hash = encodeURIComponent(term);
+  search(term);
+}
+
+function searchByRadical(r) {
+  const term = `#radical:${r}`;
   q.value = term;
   location.hash = encodeURIComponent(term);
   search(term);
@@ -207,6 +265,22 @@ function search(term) {
     return;
   }
 
+  if (t.startsWith('#pinyin:')) {
+    const pq = term.slice(8).trim();
+    const exact = hasTone(pq);
+    const chars = ((exact ? byPinyin.get(pyKey(pq)) : byPinyinBase.get(pyBase(pq))) || []).map(c => ({ entry: c }));
+    render(chars, `${pq} (拼音)`, true);
+    status.textContent = `${chars.length} character(s) with pinyin "${pq}"${exact ? '' : ' (all tones)'}`;
+    return;
+  }
+  if (t.startsWith('#radical:')) {
+    const rq = term.slice(9).trim();
+    const chars = (byRadical.get(rq) || []).map(c => ({ entry: c }));
+    render(chars, `Radical ${rq}`, true);
+    status.textContent = `${chars.length} character(s) with radical "${rq}"`;
+    return;
+  }
+
   // Populate resultMap for #character:xxx or general text queries
   if (t.startsWith('#character:')) {
     const charQuery = term.slice(11).trim().toLowerCase();
@@ -235,7 +309,8 @@ function search(term) {
   }
 
   // Unified deduplication and grouping for all matched items
-  const rawResults = [...resultMap.values()];
+  const entryKeys = new Set([...resultMap.values()].map(i => i.entry.toLowerCase()));
+  const rawResults = [...entryKeys].flatMap(k => byEntry.get(k) || []);
   const groupedMap = new Map();
 
   for (const item of rawResults) {
@@ -262,7 +337,8 @@ function search(term) {
     entry: g.entry,
     jyutpings: [...g.jyutpings],
     englishKey: [...g.englishKeys].filter(Boolean).join(', '),
-    source: g.source
+    source: g.source,
+    hanzi: byChar.get(g.entry.trim()) || null
   }));
 
   const isDetail = t.startsWith('#character:') || (finalResult.length === 1 && finalResult[0].entry.toLowerCase() === t);
@@ -316,10 +392,11 @@ async function build() {
 
   try {
     // Attempt loading with 2s timeout
-    const [charlist, wordlist, englishIndex] = await Promise.all([
+      const [charlist, wordlist, englishIndex, cdict] = await Promise.all([
       loadJsonWithTimeout(CHARLIST_URL, 2000),
       loadJsonWithTimeout(WORDLIST_URL, 2000),
-      loadJsonWithTimeout(ENGLISH_URL, 2000)
+      loadJsonWithTimeout(ENGLISH_URL, 2000),
+      loadJsonWithTimeout(HANZI_URL, 6000).catch(() => null)
     ]);
 
     for (const [entry, readingsObj] of Object.entries(charlist)) {
@@ -331,6 +408,7 @@ async function build() {
     }
 
     parseEnglishIndex(englishIndex);
+    if (cdict) for (const [ch, d] of Object.entries(cdict)) if (d) addHanzi(d.text || ch, d);
 
     status.textContent = `Loaded ${items.length} entries.`;
   } catch (err) {
